@@ -1,0 +1,16 @@
+# Core Dependencies
+pydantic>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+
+# Mem0 Cloud SDK
+mem0ai>=2.0.0
+
+# LLM & Embedding Integrations (Optional for online API usage)
+openai>=1.30.0
+
+# Enterprise Vector Database (Optional - CogniMem includes SQLite vector engine out-of-the-box)
+qdrant-client>=1.9.0
+
+# Testing & Development
+pytest>=7.0.0
