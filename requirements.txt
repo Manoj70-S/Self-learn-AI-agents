@@ -15,10 +15,5 @@ qdrant-client>=1.9.0
 # Knowledge Graph & Network Analysis
 networkx>=3.0.0
 
-# Interactive Dashboard & REST API
-streamlit>=1.30.0
-fastapi>=0.100.0
-uvicorn>=0.22.0
-
 # Testing & Development
 pytest>=7.0.0

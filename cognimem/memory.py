@@ -153,7 +153,7 @@ class CogniMemory:
         user_id: str,
         limit: int = 5,
         recency_weight: float = 0.15,
-        similarity_threshold: float = 0.15,
+        similarity_threshold: float = 0.05,
         include_graph: bool = True
     ) -> List[Dict[str, Any]]:
         """
@@ -267,10 +267,17 @@ class CogniMemory:
             card_lines.append("\n**Active Preferences & Tech Stack**:")
             for item in profile["preferences"]:
                 card_lines.append(f"- {item}")
+        if profile.get("other"):
+            card_lines.append("\n**Other Context & Recorded Facts**:")
+            for item in profile["other"]:
+                card_lines.append(f"- {item}")
         if relations:
             card_lines.append("\n**Connected Knowledge Graph Triples**:")
             for r in relations[:6]:
                 card_lines.append(f"- ({r.subject}) --[{r.predicate}]--> ({r.object})")
+
+        if len(card_lines) == 1:
+            card_lines.append("\n*(No active facts or traits recorded yet)*")
 
         return "\n".join(card_lines)
 
