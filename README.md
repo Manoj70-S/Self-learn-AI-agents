@@ -101,19 +101,29 @@ SelfLearn_AI/
 
 ## 5. Quickstart & Verification
 
-### Step 1: Run the Interactive Demo
-CogniMem runs **immediately out-of-the-box** using its built-in SQLite vector engine and deterministic semantic embeddings (zero external API keys or Docker containers required):
+### Step 1: Launch the Interactive Web Dashboard
+```bash
+streamlit run app.py
+```
+*Provides a visual UI with Live Chat, Memory Audit Inspector, Knowledge Graph, and Persona Card.*
 
+### Step 2: Run the FastAPI REST API Server
+```bash
+uvicorn server:app --reload
+```
+*API docs available at `http://localhost:8000/docs`.*
+
+### Step 3: Run the Multi-Session CLI Demo
 ```bash
 python demo.py
 ```
 
-### Step 2: Run the Unit Test Suite
+### Step 4: Run the Unit Test Suite
 ```bash
 python -m pytest tests/test_memory.py -v
 ```
 
-### Step 3: Enable OpenAI & Qdrant (Optional for Production Scale)
+### Step 5: Enable OpenAI & Qdrant Cloud (Optional for Production Scale)
 1. Copy `.env.example` to `.env` and configure your API key:
    ```ini
    OPENAI_API_KEY=sk-...

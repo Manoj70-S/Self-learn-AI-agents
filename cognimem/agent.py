@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from cognimem.memory import CogniMemory
 
@@ -19,7 +20,8 @@ USER LONG-TERM MEMORY CONTEXT:
 
 class CognitiveAgent:
     """
-    Self-learning Conversational Agent equipped with dynamic long-term memory retrieval and updating.
+    Self-learning Conversational Agent equipped with dynamic long-term memory retrieval,
+    knowledge graph grounding, and non-blocking background consolidation.
     """
 
     def __init__(
@@ -27,12 +29,14 @@ class CognitiveAgent:
         memory: Optional[CogniMemory] = None,
         system_prompt_template: str = DEFAULT_AGENT_SYSTEM_PROMPT,
         model: str = "gpt-4o",
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        max_workers: int = 2
     ):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.memory = memory or CogniMemory(api_key=self.api_key)
         self.system_prompt_template = system_prompt_template
         self.model = model
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self._openai_client = None
         if self.api_key:
             try:
@@ -47,23 +51,25 @@ class CognitiveAgent:
         user_id: str,
         session_id: Optional[str] = None,
         short_term_history: Optional[List[Dict[str, str]]] = None,
-        consolidate_memory: bool = True
+        consolidate_memory: bool = True,
+        async_consolidation: bool = False
     ) -> Dict[str, Any]:
         """
         Execute an agent turn:
-        1. Query long-term memory for semantic context.
+        1. Query long-term memory & knowledge graph for semantic context.
         2. Inject memory into prompt.
         3. Generate response.
-        4. Consolidate new conversation turns into long-term memory.
+        4. Consolidate new conversation turns into long-term memory (sync or async).
         """
         short_term_history = short_term_history or []
 
-        # Step 1: Semantic memory search
+        # Step 1: Semantic memory search (ACT-R scoring + graph relations)
         retrieved_memories = self.memory.search(
             query=user_message,
             user_id=user_id,
             limit=5,
-            recency_weight=0.15
+            recency_weight=0.15,
+            include_graph=True
         )
 
         facts_text = "\n".join([f"- {m['memory']}" for m in retrieved_memories])
@@ -87,18 +93,18 @@ class CognitiveAgent:
             # Deterministic intelligent responder for offline testing / zero-key mode
             assistant_reply = self._generate_simulated_reply(user_message, retrieved_memories)
 
-        # Step 4: Background memory consolidation
+        # Step 4: Memory consolidation (Synchronous or Non-blocking Background Queue)
         consolidation_report = None
         if consolidate_memory:
             turn = [
                 {"role": "user", "content": user_message},
                 {"role": "assistant", "content": assistant_reply}
             ]
-            consolidation_report = self.memory.add(
-                messages_or_text=turn,
-                user_id=user_id,
-                session_id=session_id
-            )
+            if async_consolidation:
+                self.executor.submit(self.memory.add, turn, user_id, session_id)
+                consolidation_report = {"status": "queued_async"}
+            else:
+                consolidation_report = self.memory.add(turn, user_id=user_id, session_id=session_id)
 
         return {
             "reply": assistant_reply,

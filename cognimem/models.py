@@ -32,13 +32,24 @@ class ReconciliationAction(str, Enum):
     NOOP = "noop"              # Fact is identical or redundant -> do nothing
 
 
+class EntityRelation(BaseModel):
+    """Subject-Predicate-Object knowledge graph triple."""
+    subject: str = Field(description="Source entity, e.g. 'Alex' or 'User'")
+    predicate: str = Field(description="Directed relationship, e.g. 'LIVES_IN', 'PREFERS_FRAMEWORK'")
+    object: str = Field(description="Target entity, e.g. 'Berlin', 'FastAPI'")
+    confidence: float = Field(default=1.0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ExtractedFact(BaseModel):
     """Atomic fact extracted from conversation turns."""
     fact: str = Field(description="Normalized, self-contained atomic statement in third person")
     memory_type: MemoryType = Field(default=MemoryType.PREFERENCE, description="Type of memory")
     category: str = Field(default="general", description="Subcategory: tech_stack, dietary, habit, etc.")
     confidence: float = Field(default=1.0, description="Confidence score between 0.0 and 1.0")
+    importance: float = Field(default=0.5, description="Intrinsic importance score from 0.0 (trivial) to 1.0 (vital)")
     temporal_context: Optional[str] = Field(default=None, description="Time context, e.g. 'recently', 'always'")
+    relations: List[EntityRelation] = Field(default_factory=list, description="Extracted knowledge graph triples")
 
 
 class ReconciliationDecision(BaseModel):
@@ -57,6 +68,7 @@ class MemoryItem(BaseModel):
     memory_type: MemoryType = MemoryType.PREFERENCE
     status: MemoryStatus = MemoryStatus.ACTIVE
     confidence: float = 1.0
+    importance: float = 0.5
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_accessed_at: Optional[datetime] = None

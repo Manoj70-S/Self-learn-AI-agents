@@ -108,3 +108,37 @@ def test_multi_user_isolation(memory_instance):
 
     assert all("Python" in m["memory"] for m in bob_mems)
     assert not any("Rust" in m["memory"] for m in bob_mems)
+
+
+def test_knowledge_graph_relational_triples(memory_instance):
+    # Add input with entity relationships
+    memory_instance.add("My name is Alex. I live in Berlin and work with FastAPI.", user_id="user_graph")
+    
+    relations = memory_instance.graph.get_relations("user_graph")
+    assert len(relations) >= 2
+    
+    predicates = [r.predicate for r in relations]
+    assert any("LIVES_IN" in p for p in predicates) or any("NAME_IS" in p for p in predicates)
+    
+    # Check multi-hop connected entities
+    connected = memory_instance.graph.get_connected_entities("User", user_id="user_graph")
+    assert len(connected) >= 1
+
+
+def test_persona_card_generation(memory_instance):
+    memory_instance.add(
+        "I am strictly allergic to peanuts. I prefer FastAPI and PostgreSQL.",
+        user_id="user_persona"
+    )
+    card = memory_instance.get_persona_card("user_persona")
+    assert "COGNITIVE PERSONA" in card
+    assert "FastAPI" in card or "Peanuts" in card
+
+
+def test_act_r_cognitive_scoring(memory_instance):
+    # Allergy has higher importance (0.95) than casual comment
+    memory_instance.add("I am allergic to shellfish.", user_id="user_scoring")
+    results = memory_instance.search("shellfish", user_id="user_scoring")
+    assert len(results) > 0
+    assert results[0]["importance"] >= 0.8
+    assert results[0]["score"] > 0.40

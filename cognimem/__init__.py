@@ -7,19 +7,23 @@ from cognimem.models import (
     MemoryType,
     MemoryStatus,
     ExtractedFact,
+    EntityRelation,
     ReconciliationAction,
     ReconciliationDecision,
 )
 from cognimem.memory import CogniMemory
 from cognimem.agent import CognitiveAgent
+from cognimem.graph import KnowledgeGraph
 
 __all__ = [
     "CogniMemory",
     "CognitiveAgent",
+    "KnowledgeGraph",
     "MemoryItem",
     "MemoryType",
     "MemoryStatus",
     "ExtractedFact",
+    "EntityRelation",
     "ReconciliationAction",
     "ReconciliationDecision",
 ]

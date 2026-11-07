@@ -14,12 +14,14 @@ from cognimem.storage.sqlite_store import SQLiteVectorStore
 from cognimem.embeddings import BaseEmbeddings, get_embedding_provider
 from cognimem.extractor import CognitiveExtractor
 from cognimem.reconciler import MemoryReconciler
+from cognimem.graph import KnowledgeGraph
 
 
 class CogniMemory:
     """
     Central Cognitive Memory Orchestrator.
-    Manages the full lifecycle: Extraction -> Semantic Reconciliation -> Vector Indexing -> Context-Aware Retrieval.
+    Manages the full lifecycle: Extraction -> Semantic Reconciliation -> Vector Indexing ->
+    Entity Knowledge Graph -> Context-Aware Multi-Factor Retrieval (ACT-R).
     """
 
     def __init__(
@@ -28,6 +30,7 @@ class CogniMemory:
         embeddings: Optional[BaseEmbeddings] = None,
         extractor: Optional[CognitiveExtractor] = None,
         reconciler: Optional[MemoryReconciler] = None,
+        graph: Optional[KnowledgeGraph] = None,
         db_path: str = "cognimem.db",
         model: str = "gpt-4o-mini",
         api_key: Optional[str] = None
@@ -36,6 +39,7 @@ class CogniMemory:
         self.storage = storage or SQLiteVectorStore(db_path=db_path)
         self.extractor = extractor or CognitiveExtractor(model=model, api_key=api_key)
         self.reconciler = reconciler or MemoryReconciler(model=model, api_key=api_key)
+        self.graph = graph or KnowledgeGraph(db_path=db_path)
 
     def add(
         self,
@@ -95,10 +99,13 @@ class CogniMemory:
                     content=decision.resolved_fact or fact_obj.fact,
                     memory_type=fact_obj.memory_type,
                     confidence=fact_obj.confidence,
+                    importance=fact_obj.importance,
                     metadata={**metadata, "category": fact_obj.category},
                     embedding=fact_vector
                 )
                 self.storage.upsert(new_item)
+                for rel in getattr(fact_obj, "relations", []):
+                    self.graph.add_relation(rel.subject, rel.predicate, rel.object, user_id=user_id, confidence=rel.confidence)
                 results["added"].append({"id": item_id, "fact": new_item.content})
 
             elif decision.action == ReconciliationAction.UPDATE:
@@ -120,10 +127,13 @@ class CogniMemory:
                     content=resolved_content,
                     memory_type=fact_obj.memory_type,
                     confidence=fact_obj.confidence,
+                    importance=fact_obj.importance,
                     metadata={**metadata, "category": fact_obj.category, "updated_from": target_id},
                     embedding=new_vector
                 )
                 self.storage.upsert(new_item)
+                for rel in getattr(fact_obj, "relations", []):
+                    self.graph.add_relation(rel.subject, rel.predicate, rel.object, user_id=user_id, confidence=rel.confidence)
                 results["updated"].append({"id": new_id, "superseded_id": target_id, "fact": new_item.content})
 
             elif decision.action == ReconciliationAction.DELETE:
@@ -143,12 +153,12 @@ class CogniMemory:
         user_id: str,
         limit: int = 5,
         recency_weight: float = 0.15,
-        similarity_threshold: float = 0.15
+        similarity_threshold: float = 0.15,
+        include_graph: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        Context-aware semantic memory retrieval.
-        Applies a composite score combining vector similarity and exponential recency decay:
-        Score = (1 - w_recency) * CosineSim + w_recency * RecencyDecay
+        Context-aware semantic memory retrieval using the Stanford ACT-R Cognitive Scoring model:
+        Score = w_sim * CosineSim + w_rec * RecencyDecay + w_imp * Importance + w_freq * FrequencyFactor
         """
         query_vector = self.embeddings.embed_text(query)
         matches = self.storage.search(
@@ -162,13 +172,32 @@ class CogniMemory:
         now = datetime.now(timezone.utc)
         ranked: List[Dict[str, Any]] = []
 
+        # Cognitive weight distribution
+        w_sim = 0.55 if recency_weight == 0.15 else max(0.2, 1.0 - recency_weight)
+        w_rec = recency_weight
+        w_imp = 0.20
+        w_freq = 0.10
+        total_w = w_sim + w_rec + w_imp + w_freq
+        w_sim, w_rec, w_imp, w_freq = w_sim / total_w, w_rec / total_w, w_imp / total_w, w_freq / total_w
+
         for item, sim in matches:
-            # Calculate recency decay in days
+            # 1. Recency decay (30-day half-life)
             delta_days = (now - item.created_at).total_seconds() / 86400.0
-            # Half-life of 30 days
             recency_decay = math.exp(-0.023 * max(0.0, delta_days))
 
-            final_score = (1.0 - recency_weight) * sim + recency_weight * recency_decay
+            # 2. Intrinsic importance
+            importance = getattr(item, "importance", 0.5)
+
+            # 3. Access frequency factor
+            frequency_factor = min(1.0, (item.access_count + 1) / 10.0)
+
+            # Composite cognitive score
+            final_score = (
+                w_sim * sim
+                + w_rec * recency_decay
+                + w_imp * importance
+                + w_freq * frequency_factor
+            )
 
             # Update access telemetry
             item.last_accessed_at = now
@@ -180,6 +209,8 @@ class CogniMemory:
                 "memory": item.content,
                 "type": item.memory_type if isinstance(item.memory_type, str) else item.memory_type.value,
                 "similarity": round(sim, 4),
+                "importance": round(importance, 2),
+                "access_count": item.access_count,
                 "score": round(final_score, 4),
                 "created_at": item.created_at.isoformat(),
                 "metadata": item.metadata
@@ -187,11 +218,65 @@ class CogniMemory:
 
         # Sort descending by composite score
         ranked.sort(key=lambda x: x["score"], reverse=True)
-        return ranked[:limit]
+        results = ranked[:limit]
+
+        # Relational Knowledge Graph augmentation
+        if include_graph:
+            words = query.split()
+            for w in words:
+                if len(w) >= 4:
+                    graph_edges = self.graph.get_connected_entities(w, user_id=user_id, max_hops=1)
+                    for edge in graph_edges:
+                        rel_str = f"Knowledge Graph Relation: ({edge['source']}) -> [{edge['relation']}] -> ({edge['target']})"
+                        if not any(r["memory"] == rel_str for r in results):
+                            results.append({
+                                "id": f"graph-{edge['source']}-{edge['target']}",
+                                "memory": rel_str,
+                                "type": "graph_relation",
+                                "similarity": 1.0,
+                                "importance": 0.8,
+                                "access_count": 1,
+                                "score": 0.95,
+                                "created_at": now.isoformat(),
+                                "metadata": {"graph_edge": edge}
+                            })
+
+        return results[:limit]
 
     def get_all(self, user_id: str, status: MemoryStatus = MemoryStatus.ACTIVE) -> List[MemoryItem]:
         """Fetch all memories for a user."""
         return self.storage.get_all(user_id=user_id, status=status)
+
+    def get_persona_card(self, user_id: str) -> str:
+        """
+        Synthesizes a structured Executive Persona Card for prompt injection and UI dashboards.
+        """
+        profile = self.get_profile(user_id)
+        relations = self.graph.get_relations(user_id)
+
+        card_lines = [f"### COGNITIVE PERSONA: {user_id.upper()}"]
+        if profile["identity"]:
+            card_lines.append("\n**Identity & Background**:")
+            for item in profile["identity"]:
+                card_lines.append(f"- {item}")
+        if profile["constraints"]:
+            card_lines.append("\n**Non-Negotiable Constraints & Allergies**:")
+            for item in profile["constraints"]:
+                card_lines.append(f"- {item}")
+        if profile["preferences"]:
+            card_lines.append("\n**Active Preferences & Tech Stack**:")
+            for item in profile["preferences"]:
+                card_lines.append(f"- {item}")
+        if relations:
+            card_lines.append("\n**Connected Knowledge Graph Triples**:")
+            for r in relations[:6]:
+                card_lines.append(f"- ({r.subject}) --[{r.predicate}]--> ({r.object})")
+
+        return "\n".join(card_lines)
+
+    def export_knowledge_graph(self, user_id: str) -> Dict[str, Any]:
+        """Export graph elements for interactive visual rendering."""
+        return self.graph.export_elements_for_ui(user_id)
 
     def get_profile(self, user_id: str) -> Dict[str, List[str]]:
         """Synthesize a structured user profile overview."""
@@ -225,5 +310,6 @@ class CogniMemory:
         return self.storage.delete(memory_id)
 
     def reset(self, user_id: Optional[str] = None) -> int:
-        """Clear memory."""
+        """Clear vector memory and graph connections."""
+        self.graph.clear(user_id)
         return self.storage.clear(user_id)

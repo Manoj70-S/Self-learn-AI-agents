@@ -42,6 +42,7 @@ class SQLiteVectorStore(BaseVectorStore):
                     memory_type TEXT NOT NULL,
                     status TEXT NOT NULL,
                     confidence REAL NOT NULL,
+                    importance REAL DEFAULT 0.5,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     last_accessed_at TEXT,
@@ -51,6 +52,10 @@ class SQLiteVectorStore(BaseVectorStore):
                     embedding_blob BLOB
                 );
             """)
+            try:
+                conn.execute("ALTER TABLE memories ADD COLUMN importance REAL DEFAULT 0.5;")
+            except Exception:
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_user_status ON memories(user_id, status);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON memories(created_at);")
             conn.commit()
@@ -69,6 +74,7 @@ class SQLiteVectorStore(BaseVectorStore):
             memory_type=MemoryType(row["memory_type"]),
             status=MemoryStatus(row["status"]),
             confidence=float(row["confidence"]),
+            importance=float(row["importance"]) if "importance" in row.keys() and row["importance"] is not None else 0.5,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
             last_accessed_at=datetime.fromisoformat(row["last_accessed_at"]) if row["last_accessed_at"] else None,
@@ -87,14 +93,15 @@ class SQLiteVectorStore(BaseVectorStore):
             conn.execute("""
                 INSERT INTO memories (
                     id, user_id, agent_id, session_id, content, memory_type, status,
-                    confidence, created_at, updated_at, last_accessed_at, access_count,
+                    confidence, importance, created_at, updated_at, last_accessed_at, access_count,
                     superseded_by, metadata_json, embedding_blob
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content=excluded.content,
                     memory_type=excluded.memory_type,
                     status=excluded.status,
                     confidence=excluded.confidence,
+                    importance=excluded.importance,
                     updated_at=excluded.updated_at,
                     last_accessed_at=excluded.last_accessed_at,
                     access_count=excluded.access_count,
@@ -110,6 +117,7 @@ class SQLiteVectorStore(BaseVectorStore):
                 item.memory_type.value if hasattr(item.memory_type, 'value') else str(item.memory_type),
                 item.status.value if hasattr(item.status, 'value') else str(item.status),
                 item.confidence,
+                getattr(item, 'importance', 0.5),
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
                 item.last_accessed_at.isoformat() if item.last_accessed_at else None,
